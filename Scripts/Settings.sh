@@ -103,6 +103,10 @@ sed -i "s#_('CPU usage (%)')#_('CPU使用率')#g" feeds/luci/modules/luci-mod-st
 sed -i '/Target Platform/d' feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
 sed -i '38,47d' feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/20_memory.js
 rm -rf feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/25_storage.js
+#去掉首页"主机名"整行(fields 是成对数组,整行删除不会破坏语法)
+sed -i "/_('Hostname')/d" "$STATUS_JS10"
+#运行时长:标签由"已运行时长"改为"运行时长"
+sed -i "s#_('Uptime')#_('运行时长')#g" "$STATUS_JS10"
 
 #usr+sys+nss
 CPUUSAGE_QC="./target/linux/qualcommax/base-files/sbin/cpuusage"
