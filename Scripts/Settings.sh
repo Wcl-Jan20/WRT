@@ -246,8 +246,8 @@ sed -i "s#_('Firmware Version'), (L.isObject(boardinfo.release) ? boardinfo.rele
 #为fakeip关闭重绑定保护
 sed -i 's/option rebind_protection 1/option rebind_protection 0/g' package/network/services/dnsmasq/files/dhcp.conf
 
-# ===== SQM 开机自启修复=====
-# 1) sqm 启动优先级 50 → 98
+# ===== SQM 开机自启修复 =====
+# 1) sqm 启动优先级 50 → 98，并去掉阻塞开机的 sleep
 sed -i 's/ +iptables +iptables-mod-ipopt//' feeds/packages/net/sqm-scripts/Makefile
 grep -q "Build/Prepare" feeds/packages/net/sqm-scripts/Makefile || sed -i '/BuildPackage,sqm-scripts/i\
 define Build/Prepare\n\
@@ -255,7 +255,8 @@ define Build/Prepare\n\
 	sed -i "s/START=50/START=98/" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
 endef\n' feeds/packages/net/sqm-scripts/Makefile
 
-# 2) sqm-guard：S98 起不来时等 WAN 载波后重试，最多 10 轮
+# 2) sqm-guard：两段式——先等载波/接口（10×3s=30s），通了再最多重试 6 次
+#    队列接口从 uci 取，不写死 wan（绑 pppoe-wan 时写死会永远 tc 不到 nsstbl）
 B=package/base-files/files/etc
 mkdir -p $B/init.d $B/rc.d
 cat > $B/init.d/sqm-guard <<'GUARD'
@@ -264,23 +265,32 @@ START=99
 start() {
 	/etc/init.d/sqm enabled || return 0
 	uci -q show sqm 2>/dev/null | grep -q "enabled='1'" || { logger -t sqm-guard "no enabled queue, skip"; return 0; }
+	IFACE=$(uci -q get sqm.@queue[0].interface 2>/dev/null)
+	[ -n "$IFACE" ] || IFACE=wan
 	(
-	logger -t sqm-guard "waiting for wan carrier"
+	logger -t sqm-guard "waiting for $IFACE up at $(cut -d. -f1 /proc/uptime)s"
 	i=0
 	while [ $i -lt 10 ]; do
 		i=$((i+1))
-		[ "$(cat /sys/class/net/wan/carrier 2>/dev/null)" = 1 ] || { sleep 5; continue; }
-		if tc qdisc show dev wan 2>/dev/null | grep -q nsstbl; then
-			logger -t sqm-guard "already active"
-			exit 0
-		fi
-		modprobe qca-nss-qdisc 2>/dev/null
+		[ "$(cat /sys/class/net/wan/carrier 2>/dev/null)" = 1 ] || { sleep 3; continue; }
+		[ -e "/sys/class/net/$IFACE" ] || { sleep 3; continue; }
+		ubus call network.interface.wan status 2>/dev/null | grep -q '"up": *true' || { sleep 3; continue; }
+		break
+	done
+	if tc qdisc show dev "$IFACE" 2>/dev/null | grep -q nsstbl; then
+		logger -t sqm-guard "already active"
+		exit 0
+	fi
+	modprobe qca-nss-qdisc 2>/dev/null
+	n=0
+	while [ $n -lt 6 ]; do
+		n=$((n+1))
 		/etc/init.d/sqm restart >/dev/null 2>&1
 		sleep 2
-		tc qdisc show dev wan 2>/dev/null | grep -q nsstbl && { logger -t sqm-guard "shaping active #$i"; exit 0; }
-		sleep 3
+		tc qdisc show dev "$IFACE" 2>/dev/null | grep -q nsstbl && { logger -t sqm-guard "shaping active #$n"; exit 0; }
+		sleep 1
 	done
-	logger -t sqm-guard "give up after $i attempts"
+	logger -t sqm-guard "give up after $n attempts"
 	) &
 }
 stop() { :; }
