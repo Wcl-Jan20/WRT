@@ -248,7 +248,6 @@ sed -i 's/option rebind_protection 1/option rebind_protection 0/g' package/netwo
 
 #sqm修复ipk支持及启动延迟
 sed -i 's/DEPENDS:=+tc +ip +kmod-sched-cake +kmod-ifb +iptables +iptables-mod-ipopt/DEPENDS:=+tc +ip +kmod-sched-cake +kmod-ifb/g' feeds/packages/net/sqm-scripts/Makefile
-
 if ! grep -q "Build/Prepare" feeds/packages/net/sqm-scripts/Makefile; then
     sed -i '/$(eval $(call BuildPackage,sqm-scripts))/i\
 define Build/Prepare\n\
@@ -256,6 +255,12 @@ define Build/Prepare\n\
 	sed -i "s/START=50/START=95/g" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
 	sed -i "/export SQM_VERBOSITY_MIN=5/i \	sleep 9" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
 endef\n' feeds/packages/net/sqm-scripts/Makefile
+fi
+#NSS SQM(nss-zk.qos)依赖 qca-nss-qdisc,但该 kmod 没生成 /etc/modules.d 自动加载条目,补一个
+if [ -d package/base-files/files/etc ]; then
+	mkdir -p package/base-files/files/etc/modules.d
+	echo "qca-nss-qdisc" > package/base-files/files/etc/modules.d/60-qca-nss-qdisc
+	echo "已补 qca-nss-qdisc 开机自动加载"
 fi
 
 #CPU 默认模式改为平衡(schedutil),同时打开 NSS 自动调频(auto_scale)
