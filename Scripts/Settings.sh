@@ -246,22 +246,46 @@ sed -i "s#_('Firmware Version'), (L.isObject(boardinfo.release) ? boardinfo.rele
 #为fakeip关闭重绑定保护
 sed -i 's/option rebind_protection 1/option rebind_protection 0/g' package/network/services/dnsmasq/files/dhcp.conf
 
-#sqm修复ipk支持及启动延迟
-sed -i 's/DEPENDS:=+tc +ip +kmod-sched-cake +kmod-ifb +iptables +iptables-mod-ipopt/DEPENDS:=+tc +ip +kmod-sched-cake +kmod-ifb/g' feeds/packages/net/sqm-scripts/Makefile
-if ! grep -q "Build/Prepare" feeds/packages/net/sqm-scripts/Makefile; then
-    sed -i '/$(eval $(call BuildPackage,sqm-scripts))/i\
+# ===== SQM 开机自启修复（整段贴到 Scripts/Settings.sh）=====
+# 1) sqm 启动优先级 50 → 98，并去掉阻塞开机的 sleep
+sed -i 's/ +iptables +iptables-mod-ipopt//' feeds/packages/net/sqm-scripts/Makefile
+grep -q "Build/Prepare" feeds/packages/net/sqm-scripts/Makefile || sed -i '/BuildPackage,sqm-scripts/i\
 define Build/Prepare\n\
 	$(call Build/Prepare/Default)\n\
-	sed -i "s/START=50/START=95/g" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
-	sed -i "/export SQM_VERBOSITY_MIN=5/i \	sleep 9" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
+	sed -i "s/START=50/START=98/" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
 endef\n' feeds/packages/net/sqm-scripts/Makefile
-fi
-#NSS SQM(nss-zk.qos)依赖 qca-nss-qdisc,但该 kmod 没生成 /etc/modules.d 自动加载条目,补一个
-if [ -d package/base-files/files/etc ]; then
-	mkdir -p package/base-files/files/etc/modules.d
-	echo "qca-nss-qdisc" > package/base-files/files/etc/modules.d/60-qca-nss-qdisc
-	echo "已补 qca-nss-qdisc 开机自动加载"
-fi
+
+# 2) qca-nss-qdisc 开机自加载（nss-packages 12.5 分支漏了 AUTOLOAD）
+mkdir -p package/base-files/files/etc/modules.d
+echo qca-nss-qdisc > package/base-files/files/etc/modules.d/60-qca-nss-qdisc
+
+# 3) sqm-guard：S98 起不来时等 WAN 载波后重试，最多 10 轮
+B=package/base-files/files/etc
+mkdir -p $B/init.d $B/rc.d
+cat > $B/init.d/sqm-guard <<'GUARD'
+#!/bin/sh /etc/rc.common
+START=99
+start() {
+	/etc/init.d/sqm enabled || return 0
+	(
+	i=0
+	while [ $i -lt 10 ]; do
+		i=$((i+1))
+		[ "$(cat /sys/class/net/wan/carrier 2>/dev/null)" = 1 ] || { sleep 5; continue; }
+		tc qdisc show dev wan 2>/dev/null | grep -q nsstbl && exit 0
+		modprobe qca-nss-qdisc 2>/dev/null
+		/etc/init.d/sqm restart >/dev/null 2>&1
+		sleep 2
+		tc qdisc show dev wan 2>/dev/null | grep -q nsstbl && { logger -t sqm-guard "shaping active #$i"; exit 0; }
+		sleep 3
+	done
+	logger -t sqm-guard "give up"
+	) &
+}
+stop() { :; }
+GUARD
+chmod 755 $B/init.d/sqm-guard
+ln -sf ../init.d/sqm-guard $B/rc.d/S99sqm-guard
 
 #CPU 默认模式改为平衡(schedutil),同时打开 NSS 自动调频(auto_scale)
 #注意:开机最后生效的是 /etc/config/pbuf(START=95),cpufreq(START=15)会被它覆盖
