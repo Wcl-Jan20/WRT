@@ -99,18 +99,22 @@ if [[ "${WRT_TARGET^^}" == *"QUALCOMMAX"* ]]; then
 fi
 
 #修改luci首页显示
-#CPU 标签(兼容 _('CPU usage') 与 _('CPU usage (%)') 两种写法)
+#CPU 标签(兼容 _('CPU usage') 与 _('CPU usage (%)'))
 sed -i "s#_('CPU usage[^']*')#_('CPU使用率')#g" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
-#去掉"目标平台"整行
-sed -i "/_('Target Platform')/d" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
 #去掉"主机名"整行
 sed -i "/_('Hostname')/d" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
+#温度行索引前移(删掉主机名/目标平台后数组少了4个元素)
+sed -i "s#fields\.splice(6,[[:space:]]*0,[[:space:]]*_('Temperature'))#fields.splice(4, 0, _('Temperature'))#" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
+sed -i "s#fields\.splice(7,[[:space:]]*0,[[:space:]]*tempinfo\.tempinfo)#fields.splice(5, 0, tempinfo.tempinfo)#" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
 #运行时长
 sed -i "s#_('Uptime')#_('运行时长')#g" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
+#本地时间去掉时区:timeStyle long/full 会带 GMT+8,medium 只留 时:分:秒
+sed -i "s#timeStyle:[^,]*,#timeStyle: 'medium',#" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
+#去掉"目标平台"整行
+sed -i "/_('Target Platform')/d" feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js
 #内存精简 + 去掉存储
 sed -i '38,47d' feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/20_memory.js
 rm -rf feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/25_storage.js
-
 
 #usr+sys+nss
 CPUUSAGE_QC="./target/linux/qualcommax/base-files/sbin/cpuusage"
