@@ -263,19 +263,24 @@ cat > $B/init.d/sqm-guard <<'GUARD'
 START=99
 start() {
 	/etc/init.d/sqm enabled || return 0
+	uci -q show sqm 2>/dev/null | grep -q "enabled='1'" || { logger -t sqm-guard "no enabled queue, skip"; return 0; }
 	(
+	logger -t sqm-guard "waiting for wan carrier"
 	i=0
 	while [ $i -lt 10 ]; do
 		i=$((i+1))
 		[ "$(cat /sys/class/net/wan/carrier 2>/dev/null)" = 1 ] || { sleep 5; continue; }
-		tc qdisc show dev wan 2>/dev/null | grep -q nsstbl && exit 0
+		if tc qdisc show dev wan 2>/dev/null | grep -q nsstbl; then
+			logger -t sqm-guard "already active"
+			exit 0
+		fi
 		modprobe qca-nss-qdisc 2>/dev/null
 		/etc/init.d/sqm restart >/dev/null 2>&1
 		sleep 2
 		tc qdisc show dev wan 2>/dev/null | grep -q nsstbl && { logger -t sqm-guard "shaping active #$i"; exit 0; }
 		sleep 3
 	done
-	logger -t sqm-guard "give up"
+	logger -t sqm-guard "give up after $i attempts"
 	) &
 }
 stop() { :; }
