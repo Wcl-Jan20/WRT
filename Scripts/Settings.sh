@@ -246,8 +246,8 @@ sed -i "s#_('Firmware Version'), (L.isObject(boardinfo.release) ? boardinfo.rele
 #为fakeip关闭重绑定保护
 sed -i 's/option rebind_protection 1/option rebind_protection 0/g' package/network/services/dnsmasq/files/dhcp.conf
 
-# ===== SQM 开机自启修复（整段贴到 Scripts/Settings.sh）=====
-# 1) sqm 启动优先级 50 → 98，并去掉阻塞开机的 sleep
+# ===== SQM 开机自启修复=====
+# 1) sqm 启动优先级 50 → 98
 sed -i 's/ +iptables +iptables-mod-ipopt//' feeds/packages/net/sqm-scripts/Makefile
 grep -q "Build/Prepare" feeds/packages/net/sqm-scripts/Makefile || sed -i '/BuildPackage,sqm-scripts/i\
 define Build/Prepare\n\
@@ -255,11 +255,7 @@ define Build/Prepare\n\
 	sed -i "s/START=50/START=98/" $(PKG_BUILD_DIR)/platform/openwrt/sqm-init\n\
 endef\n' feeds/packages/net/sqm-scripts/Makefile
 
-# 2) qca-nss-qdisc 开机自加载（nss-packages 12.5 分支漏了 AUTOLOAD）
-mkdir -p package/base-files/files/etc/modules.d
-echo qca-nss-qdisc > package/base-files/files/etc/modules.d/60-qca-nss-qdisc
-
-# 3) sqm-guard：S98 起不来时等 WAN 载波后重试，最多 10 轮
+# 2) sqm-guard：S98 起不来时等 WAN 载波后重试，最多 10 轮
 B=package/base-files/files/etc
 mkdir -p $B/init.d $B/rc.d
 cat > $B/init.d/sqm-guard <<'GUARD'
