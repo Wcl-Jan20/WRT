@@ -132,14 +132,7 @@ case "$nss_load" in
 	''|*%) ;;
 	*) nss_load="${nss_load}%" ;;
 esac
-#NSS 当前频率(自动调频,会在 low/mid/max 三档之间变),取不到就不显示
-nss_freq="$(cat /sys/kernel/debug/clk/ubi0_core_clk/clk_rate 2>/dev/null)"
-[ -z "$nss_freq" ] && nss_freq="$(awk '/ubi0_core_clk/ {print $5; exit}' /sys/kernel/debug/clk/clk_summary 2>/dev/null)"
-case "$nss_freq" in
-	''|*[!0-9]*) nss_freq="" ;;
-	*) nss_freq=" ($((nss_freq / 1000000)).$(( (nss_freq % 1000000) / 100000 ))MHz)" ;;
-esac
-echo -n "USR: ${usr:-0%} SYS: ${sys:-0%} NSS: ${nss_load:-N/A}${nss_freq}"
+echo -n "USR: ${usr:-0%} SYS: ${sys:-0%} NSS: ${nss_load:-N/A}"
 EOF
 	chmod 0755 "$CPUUSAGE_QC"
 	#校验:最后一行必须是 echo 输出行且能被 sh 解析,否则说明 heredoc 结束符位置不对
@@ -317,7 +310,7 @@ if [ -f "$PBUF_UCI" ]; then
 		printf "\n  option auto_scale 'off'\n" >> "$PBUF_UCI"
 	fi
 	if grep -q "option scaling_governor 'schedutil'" "$PBUF_UCI" && grep -q "option auto_scale 'off'" "$PBUF_UCI"; then
-		echo "CPU 模式: schedutil(动态调频) / NSS: auto_scale=off(下面 S96 锁 mid 档)"
+		echo "CPU 模式: schedutil(动态调频) / NSS: auto_scale=off(S96 锁 mid 档)"
 	else
 		echo "警告: pbuf.uci 设置不完整,当前为: $(grep -E 'scaling_governor|auto_scale' "$PBUF_UCI" | sed 's/^[[:space:]]*//' | tr '\n' ' ')"
 	fi
