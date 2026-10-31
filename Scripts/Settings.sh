@@ -298,10 +298,12 @@ GUARD
 chmod 755 $B/init.d/sqm-guard
 ln -sf ../init.d/sqm-guard $B/rc.d/S99sqm-guard
 
-#CPU 默认模式改为平衡(schedutil),同时打开 NSS 自动调频(auto_scale)
+#CPU 默认模式改为平衡(schedutil);NSS 关闭自动变频(auto_scale=off)
 #注意:开机最后生效的是 /etc/config/pbuf(START=95),cpufreq(START=15)会被它覆盖
 #auto_scale 不只是"调频开关":驱动把它的值当作 stats_enable 发给 NSS 固件,
-#关掉(=0)后固件就不再上报 core stats,首页 NSS 百分比会永远冻住,调频也不会启动
+#关掉(=0)后固件就不再上报 core stats,首页 NSS 百分比会冻住——这里靠下面的
+#0029 补丁把 stats_enable 解耦(恒为 1),所以锁频不影响首页统计
+#auto_scale=off 只是"不许升降频",真正的档位由下面 S96 脚本写 current_freq 决定
 PBUF_UCI="package/kernel/mac80211/files/pbuf.uci"
 if [ -f "$PBUF_UCI" ]; then
 	if grep -q "^[[:space:]]*option scaling_governor" "$PBUF_UCI"; then
@@ -310,18 +312,40 @@ if [ -f "$PBUF_UCI" ]; then
 		printf "\n  option scaling_governor 'schedutil'\n" >> "$PBUF_UCI"
 	fi
 	if grep -q "^[[:space:]]*option auto_scale" "$PBUF_UCI"; then
-		sed -i "s#^[[:space:]]*option auto_scale.*#  option auto_scale 'on'#" "$PBUF_UCI"
+		sed -i "s#^[[:space:]]*option auto_scale.*#  option auto_scale 'off'#" "$PBUF_UCI"
 	else
-		printf "\n  option auto_scale 'on'\n" >> "$PBUF_UCI"
+		printf "\n  option auto_scale 'off'\n" >> "$PBUF_UCI"
 	fi
-	if grep -q "option scaling_governor 'schedutil'" "$PBUF_UCI" && grep -q "option auto_scale 'on'" "$PBUF_UCI"; then
-		echo "CPU 模式: schedutil(动态调频) / NSS: auto_scale=on(统计+调频已开启)"
+	if grep -q "option scaling_governor 'schedutil'" "$PBUF_UCI" && grep -q "option auto_scale 'off'" "$PBUF_UCI"; then
+		echo "CPU 模式: schedutil(动态调频) / NSS: auto_scale=off(下面 S96 锁 mid 档)"
 	else
 		echo "警告: pbuf.uci 设置不完整,当前为: $(grep -E 'scaling_governor|auto_scale' "$PBUF_UCI" | sed 's/^[[:space:]]*//' | tr '\n' ' ')"
 	fi
 else
 	echo "提示: 未找到 pbuf.uci,跳过 CPU/NSS 模式设置"
 fi
+
+#NSS 锁频到 mid 档(748.8MHz):不新增补丁,只用驱动自带的 sysctl 接口
+#为什么单独写脚本、不塞进 qca-nss-pbuf.init:那个函数有 3 个早退分支(61/68/73 行),
+#关掉 wifi nss offload 时会直接 exit,插在它后面的代码永远不执行
+#时序:pbuf(START=95)先把 auto_scale 置 0,S96 再写 current_freq 定档
+NSSF_ETC=package/base-files/files/etc
+mkdir -p $NSSF_ETC/init.d $NSSF_ETC/rc.d
+cat > $NSSF_ETC/init.d/nss-freq-lock <<'NSSF'
+#!/bin/sh /etc/rc.common
+START=96
+NSS_MID_HZ=748800000
+start() {
+	C=/proc/sys/dev/nss/clock
+	[ -w "$C/current_freq" ] || { logger -t nss-freq "current_freq not writable, skip"; return 0; }
+	[ -w "$C/auto_scale" ] && echo 0 > "$C/auto_scale" 2>/dev/null
+	echo "$NSS_MID_HZ" > "$C/current_freq" 2>/dev/null
+	logger -t nss-freq "locked mid: $(cat "$C/current_freq" 2>/dev/null) Hz, auto_scale=$(cat "$C/auto_scale" 2>/dev/null)"
+}
+stop() { :; }
+NSSF
+chmod 755 $NSSF_ETC/init.d/nss-freq-lock
+ln -sf ../init.d/nss-freq-lock $NSSF_ETC/rc.d/S96nss-freq-lock
 
 #原驱动把 auto_scale 的值当作 stats_enable 发给 NSS 固件,auto_scale=0 时固件停止上报统计,
 #cpu_load_ubi(首页那个百分比)就永久冻结;补丁让 stats_enable 恒为 1,只用 auto_scale 控制是否调频
